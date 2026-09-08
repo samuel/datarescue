@@ -1,0 +1,20 @@
+.DS_Store
+.idea
+
+# Built binaries
+/fstool
+/cuetool
+/disctool
+/1steptool
+/qictool
+
+# Disk images, backup archives and ddrescue maps
+*.img
+*.bin
+*.iso
+*.map
+*.1-Step
+*.qic
+
+# Test fixtures are checked in, gzipped
+!**/testdata/**

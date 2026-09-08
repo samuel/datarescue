@@ -1,0 +1,37 @@
+version: "2"
+
+linters:
+  enable:
+    - durationcheck
+    - errcheck
+    - errorlint
+    - ineffassign
+    - gocritic
+    - gosec
+    - govet
+    - makezero
+    - nilerr
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    gosec:
+      excludes:
+        # G104 duplicates errcheck, which is enabled by default, understands the
+        # //nolint:errcheck directives already in this repo, and reports the
+        # same sites more precisely.
+        - G104
+        # G304 fires on opening a path held in a variable. Every tool here takes
+        # the image path from the operator's command line and every library
+        # function takes it from its caller, so this is the whole job.
+        - G304
+  exclusions:
+    rules:
+      # gosec reasons about untrusted input reaching the filesystem and about
+      # width conversions on values an attacker controls. Test code builds its
+      # own fixtures and writes them under t.TempDir(), so these fire on
+      # constructed data and drown out the findings that matter.
+      - linters:
+          - gosec
+        path: _test\.go
+        text: "G1(01|04|15)|G3(01|04|06|703)|G703"
