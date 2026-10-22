@@ -2,8 +2,11 @@ package iso
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
+	"io"
 	"io/fs"
+	"os"
 	"testing"
 )
 
@@ -25,6 +28,15 @@ func FuzzReader(f *testing.F) {
 	f.Add(flatten(buildRelocatedISO(f)))
 	multi, _ := multiExtentISO(f, flagMultiExtent, "OTHER.DAT;1")
 	f.Add(flatten(multi))
+	// A real hdiutil image: Rock Ridge in both trees, and no NM in either.
+	if gz, err := os.Open("testdata/hdiutil-hybrid.iso.gz"); err == nil {
+		if zr, err := gzip.NewReader(gz); err == nil {
+			if img, err := io.ReadAll(zr); err == nil {
+				f.Add(img)
+			}
+		}
+		gz.Close() //nolint:errcheck // read-only
+	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		r, err := OpenReader(bytes.NewReader(data))

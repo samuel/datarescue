@@ -429,8 +429,12 @@ records and only the damaged block's names are lost — one bad sector under
 #### ISO 9660
 
 Joliet and Rock Ridge names are applied where the disc carries them, falling
-back to 8.3 names where it does not; a plain name with no extension loses the
-separator the format stores with it, so `README.;1` is listed as `README`.
+back to 8.3 names where it does not. Rock Ridge names are preferred, but a disc
+whose Rock Ridge records carry attributes and no names (as `hdiutil makehybrid`
+writes) is listed with its Joliet names and the Rock Ridge permissions and
+dates; `info` says which names are in use. A plain name with no extension
+loses the separator the format stores with it, so `README.;1` is listed as
+`README`.
 Each entry's date is the Rock Ridge modification time where there is one and
 the directory record's recording date otherwise, and `extract -times` applies
 it. Rock Ridge permissions appear in `ls -l`, and a Rock Ridge device node, pipe

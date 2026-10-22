@@ -57,7 +57,7 @@ func (w *walker) parseRockRidge(rec []byte, nameLen int) rockRidge {
 	if suaStart%2 != 0 {
 		suaStart++
 	}
-	suaStart += w.r.rrSkip
+	suaStart += w.rrSkip
 	if suaStart >= len(rec) {
 		return rockRidge{}
 	}

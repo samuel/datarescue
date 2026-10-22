@@ -112,9 +112,9 @@ type Reader struct {
 	jolietRootSize int64
 	jolietRootTime time.Time
 
-	// Rock Ridge state, settled at open
-	rrDetected bool
-	rrSkip     int // System Use skip count from SP entry
+	// Rock Ridge as each tree's root records it, settled at open
+	rr       treeRR // the primary tree
+	jolietRR treeRR // the Joliet tree
 
 	// issues records damage found while opening the volume. Without it, a
 	// supplementary descriptor that could not be read would silently lose
@@ -320,31 +320,91 @@ func (r *Reader) rootRecordTime(rec []byte, which string) time.Time {
 // Joliet tree when there is one and no Rock Ridge, else the primary one.
 func (r *Reader) Root() DirEntry {
 	e := DirEntry{Path: "/", IsDir: true, StartLBA: r.rootLBA, Size: r.rootSize, ModTime: r.rootTime}
-	if r.useJoliet() {
+	if r.UsesJoliet() {
 		e.StartLBA, e.Size, e.ModTime = r.jolietRootLBA, r.jolietRootSize, r.jolietRootTime
 	}
 	e.Mode = entryMode(e)
 	return e
 }
 
-// detectRockRidge reads the root directory's dot entry for the SP entry that
-// marks Rock Ridge. It runs at open so that names are settled before any walk
-// and the walk never changes state another goroutine reads.
+// treeRR is what one directory tree's root says about Rock Ridge.
+type treeRR struct {
+	present bool // the root's dot entry carries the SP entry
+	skip    int  // the System Use skip count SP gives
+	// names is set when the root's records carry NM, or when the root holds
+	// no records to tell either way. Some writers record Rock Ridge
+	// attributes without names: hdiutil writes SP, PX and TF but never NM.
+	names bool
+}
+
+// detectRockRidge reads each tree's root directory for the SP entry that marks
+// Rock Ridge, and for whether it supplies names. It runs at open so that names
+// are settled before any walk and the walk never changes state another
+// goroutine reads.
 func (r *Reader) detectRockRidge() {
-	rootSec, err := r.ReadSector(r.rootLBA)
+	var err error
+	r.rr, err = r.probeTree(r.rootLBA)
 	if err != nil {
 		// Without this the names would silently fall back to 8.3 with no
 		// explanation.
 		r.issues = append(r.issues, fmt.Sprintf(
 			"the root directory sector could not be read, so Rock Ridge names are unavailable: %s", err))
-		return
 	}
-	if len(rootSec) >= 1 {
-		dotLen := int(rootSec[0])
-		if dotLen >= 34 && dotLen <= len(rootSec) {
-			r.rrDetected, r.rrSkip = findSP(rootSec[:dotLen])
+	if r.HasJoliet() {
+		// An unreadable Joliet root is reported by the walk that reads it.
+		r.jolietRR, _ = r.probeTree(r.jolietRootLBA)
+	}
+}
+
+// probeTree reads one tree's root sector for Rock Ridge.
+func (r *Reader) probeTree(lba int64) (treeRR, error) {
+	sec, err := r.ReadSector(lba)
+	if err != nil {
+		return treeRR{}, err
+	}
+	var t treeRR
+	if len(sec) < 1 {
+		return t, nil
+	}
+	dotLen := int(sec[0])
+	if dotLen < 34 || dotLen > len(sec) {
+		return t, nil
+	}
+	t.present, t.skip = findSP(sec[:dotLen])
+	if t.present {
+		t.names = r.recordsCarryNM(sec[dotLen:], t.skip)
+	}
+	return t, nil
+}
+
+// recordsCarryNM reports whether any record in a root directory sector, other
+// than dot and dotdot, has an NM entry. A sector with no other records gives
+// no evidence either way and counts as carrying names, so Rock Ridge is used
+// as its SP entry says.
+func (r *Reader) recordsCarryNM(sec []byte, skip int) bool {
+	// A walker of its own, so a continuation it follows reports nowhere.
+	w := &walker{r: r, rr: true, rrSkip: skip}
+	var records bool
+	for off := 0; off < len(sec); {
+		recLen := int(sec[off])
+		if recLen == 0 || off+recLen > len(sec) {
+			break
+		}
+		rec := sec[off : off+recLen]
+		off += recLen
+		if len(rec) < 34 {
+			continue
+		}
+		nameLen := int(rec[32])
+		if nameLen == 0 || 33+nameLen > len(rec) || (nameLen == 1 && rec[33] <= 0x01) {
+			continue
+		}
+		records = true
+		if w.parseRockRidge(rec, nameLen).name != "" {
+			return true
 		}
 	}
+	return !records
 }
 
 // VolumeLabel returns the Joliet volume label if present, else the ISO 9660 one.
@@ -376,9 +436,35 @@ func (r *Reader) SectorSize() int { return r.sectorSize }
 // HasJoliet reports whether the image has a Joliet SVD.
 func (r *Reader) HasJoliet() bool { return r.jolietRootLBA != 0 }
 
-// HasRockRidge reports whether the root directory carries the Rock Ridge SP
-// entry.
-func (r *Reader) HasRockRidge() bool { return r.rrDetected }
+// HasRockRidge reports whether Walk applies Rock Ridge entries: whether the
+// root of the tree it reads carries the SP entry.
+func (r *Reader) HasRockRidge() bool { return r.walkedRR().present }
+
+// UsesJoliet reports whether Walk reads the Joliet tree. It does when there is
+// one and the primary tree's Rock Ridge does not supply names: Rock Ridge
+// enriches the primary tree, while Joliet is a separate tree whose names are
+// better than 8.3 ones.
+func (r *Reader) UsesJoliet() bool { return r.HasJoliet() && (!r.rr.present || !r.rr.names) }
+
+// Names reports where the names Walk returns come from: "Rock Ridge",
+// "Joliet" or "ISO 9660".
+func (r *Reader) Names() string {
+	switch t := r.walkedRR(); {
+	case t.present && t.names:
+		return "Rock Ridge"
+	case r.UsesJoliet():
+		return "Joliet"
+	}
+	return "ISO 9660"
+}
+
+// walkedRR is the Rock Ridge state of the tree Walk reads.
+func (r *Reader) walkedRR() treeRR {
+	if r.UsesJoliet() {
+		return r.jolietRR
+	}
+	return r.rr
+}
 
 // ReadSector reads the 2048-byte user-data payload from lba.
 //

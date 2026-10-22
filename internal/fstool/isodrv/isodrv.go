@@ -283,6 +283,7 @@ func (v *volume) Info(w io.Writer) error {
 	p("Sectors:       %d", v.r.TotalSectors())
 	p("Joliet:        %s", yesNo(v.r.HasJoliet()))
 	p("Rock Ridge:    %s", yesNo(v.r.HasRockRidge()))
+	p("Names:         %s", v.r.Names())
 	return nil
 }
 

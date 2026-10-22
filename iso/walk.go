@@ -44,6 +44,8 @@ type walker struct {
 	r       *Reader
 	fn      func(DirEntry) error
 	joliet  bool
+	rr      bool // the tree's records carry Rock Ridge entries
+	rrSkip  int  // the System Use skip count the tree's SP entry gives
 	recurse bool
 	visited map[int64]bool
 	issues  []string
@@ -85,12 +87,10 @@ func (r *Reader) Walk(fn func(DirEntry) error) error {
 }
 
 func (r *Reader) newWalker(fn func(DirEntry) error, recurse bool) *walker {
-	// Rock Ridge enriches the plain ISO 9660 tree, while Joliet is a separate
-	// tree, so Rock Ridge wins when both are present.
-	return &walker{r: r, fn: fn, joliet: r.useJoliet(), recurse: recurse, visited: make(map[int64]bool)}
+	t := r.walkedRR()
+	return &walker{r: r, fn: fn, joliet: r.UsesJoliet(), rr: t.present, rrSkip: t.skip,
+		recurse: recurse, visited: make(map[int64]bool)}
 }
-
-func (r *Reader) useJoliet() bool { return r.HasJoliet() && !r.rrDetected }
 
 // dirWalk is the state of reading one directory: its issue budget, and a
 // multi-extent file whose records are still being collected. The records of
@@ -285,7 +285,7 @@ func (d *dirWalk) record(rec []byte) error {
 	// Parse the Rock Ridge System Use Area: NM (alternate name), SL (symlink),
 	// PX (POSIX attributes), TF (timestamps), and CL and RE (relocation).
 	var rr rockRidge
-	if w.r.rrDetected && !w.joliet {
+	if w.rr {
 		rr = w.parseRockRidge(rec, nameLen)
 		if rr.name != "" {
 			fullPath = d.path + rr.name
